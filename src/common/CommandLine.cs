@@ -756,18 +756,18 @@ class CommandLine
 
             // Create the 'Usage' line;
             string appName = GetEntryAssemblyName();
+            sb.Append("Usage: ").AppendLine(appName);
+
             if (parameterSetParameter != null)
             {
                 string command = parameterSetParameter.Syntax();
                 sb.Append(command).AppendLine().AppendLine();
-            }
-
-            sb.Append("Usage: ").Append(appName);
-            if (parameterSetName.Length > 0)
-            {
-                sb.Append(' ');
-                sb.Append(command);
-                sb.Append(" [Action] (global settings)");
+                if (parameterSetName.Length > 0)
+                {
+                    sb.Append(' ');
+                    sb.Append(command);
+                    sb.Append(" [Action] (global settings)");
+                }
             }
 
             bool hasQualifiers = false;
@@ -789,14 +789,7 @@ class CommandLine
                     break;
                 }
             }
-            sb.AppendLine();
-
-            // Print the help for the command itself.
-            /*if (parameterSetParameter != null && !string.IsNullOrEmpty(parameterSetParameter.HelpText))
-            {
-                sb.AppendLine();
-                Wrap(sb.Append("  "), parameterSetParameter.HelpText, 2, "  ", maxLineWidth);
-            }*/
+            // sb.AppendLine();
 
             if (hasParameters)
             {
@@ -824,9 +817,9 @@ class CommandLine
                     if (parameter.IsNamed)
                     {
                         ParameterHelp(parameter, sb, QualifierSyntaxWidth, maxLineWidth);
-                        string usageKey = $"{parameterSetParameter.Name}-{parameter.Name}";
-
-                        if (_customHelpText.ContainsKey(parameterSetParameter.Name) && _customHelpText[parameterSetParameter.Name].ContainsKey(parameter.Name))
+                        if (parameterSetParameter != null && 
+                            _customHelpText.ContainsKey(parameterSetParameter?.Name) && 
+                            _customHelpText[parameterSetParameter.Name].ContainsKey(parameter.Name))
                         { 
                             Wrap(sb, _customHelpText[parameterSetParameter.Name][parameter.Name], QualifierSyntaxWidth, new string(' ', QualifierSyntaxWidth), maxLineWidth, false);
                         }
@@ -890,11 +883,49 @@ class CommandLine
                     "IsPositional=\"" + IsPositional + "\" " +
                     "HelpText=\"" + HelpText + "\"/>";
             }
+
             public string Syntax()
+            {
+                return Syntax(false, false);
+            }
+
+            public string Syntax(bool printType, bool printDefaultValue)
             {
                 string ret = _name;
                 if (IsNamed)
                     ret = "-" + ret;
+                if (printType)
+                {
+                    // We print out arrays with the ... notiation, so we don't want the [] when we display the type
+                    Type displayType = Type;
+                    if (displayType.IsArray)
+                        displayType = displayType.GetElementType();
+                    if (displayType.GetTypeInfo().IsGenericType && displayType.GetGenericTypeDefinition() == typeof(Nullable<>))
+                        displayType = displayType.GetGenericArguments()[0];
+
+                    bool shouldPrint = true;
+                    // Bool type implied on named parameters
+                    if (IsNamed && _type == typeof(bool))
+                    {
+                        shouldPrint = false;
+                        if (_defaultValue != null) // && (bool)_defaultValue) // TODO: Ask Mariana
+                            shouldPrint = false;
+                    }
+                    // string type is implied on positional parameters
+                    if (IsPositional && displayType == typeof(string) && string.IsNullOrEmpty(_defaultValue as string))
+                        shouldPrint = false;
+
+                    if (shouldPrint)
+                    {
+                        ret = ret + (IsNamed ? ":" : ".") + displayType.Name.ToUpper();
+                        if (printDefaultValue && _defaultValue != null)
+                        {
+                            string defValue = _defaultValue.ToString();
+                            if (defValue.Length < 40)   // TODO is this reasonable?
+                                ret += "(" + defValue + ")";
+                        }
+                    }
+                }
                 if (Type.IsArray)
                     ret = ret + (IsNamed ? "," : " ") + "...";
 
@@ -902,6 +933,9 @@ class CommandLine
                     ret = "[" + ret + "]";
                 return ret;
             }
+
+
+
 
             #region private
             internal CommandLineParameter(string Name, object value, string helpText, Type type,
@@ -1207,13 +1241,7 @@ class CommandLine
                         {
                             _helpRequestedFor = String.Empty;
                         }
-                        
-                        /*if (i + 1 < _args.Count)
-                        {
-                            i++;
-                            _helpRequestedFor = _args[i];
-                            _args[i] = null;
-                        }*/
+
                         _mustParseHelpStrings = true;
                         break;
                     }
@@ -1658,7 +1686,13 @@ class CommandLine
                 return GetHelp(maxLineWidth, String.Empty, true);
 
             StringBuilder sb = new StringBuilder();
-                        
+
+            string appName = GetEntryAssemblyName();
+            string intro = "The " + appName + " application has a number of commands associated with it, " +
+                "each with its own set of parameters and qualifiers.  They are listed below.  " +
+                "Options that are common to all commands are listed at the end.";
+            Wrap(sb, intro, 0, String.Empty, maxLineWidth, false);
+
             // Always print the default parameter set first.
             if (_defaultParamSetEncountered)
             {
@@ -1798,7 +1832,7 @@ class CommandLine
                     sb.AppendLine();
                 }
             }
-            sb.AppendLine();
+           // sb.AppendLine();
         }
         private string GetHelpGlobalQualifiers(int maxLineWidth)
         {
@@ -1820,17 +1854,30 @@ class CommandLine
 
         private static int GetConsoleWidth()
         {
+#if COREFX
             return 120; // Can't retrieve console width in .NET Core
+#else
+            return Console.WindowWidth;
+#endif
         }
 
         private static int GetConsoleHeight()
         {
+#if COREFX
             return 100; // Can't retrieve console height in .NET Core
+#else
+            return Console.WindowHeight;
+#endif
         }
 
         private static string GetEntryAssemblyName()
         {
+#if COREFX
+            // Cannot use Assembly.GetEntryAssembly(). This assumes that CommandLine is compiled into your application.
+            Assembly entryAssembly = typeof(CommandLineParser).GetTypeInfo().Assembly;
+#else
             Assembly entryAssembly = Assembly.GetEntryAssembly();
+#endif
             if (entryAssembly != null)
             {
                 return Path.GetFileNameWithoutExtension(entryAssembly.ManifestModule.Name);
